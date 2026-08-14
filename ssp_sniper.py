@@ -3,12 +3,17 @@ import re
 import json
 import sqlite3
 import argparse
-import requests
+import csv
+from datetime import datetime
 import praw
 from openai import OpenAI
 from dotenv import load_dotenv
 import time
 from typing import Dict, Any, Optional
+from rich.console import Console
+from rich.table import Table
+
+console = Console()
 
 # Load environment variables
 load_dotenv()
@@ -17,7 +22,6 @@ REDDIT_CLIENT_ID = os.getenv("REDDIT_CLIENT_ID")
 REDDIT_CLIENT_SECRET = os.getenv("REDDIT_CLIENT_SECRET")
 REDDIT_USER_AGENT = os.getenv("REDDIT_USER_AGENT", "script:ssp-sniper:v1.0 (by /u/YOUR_USERNAME)")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-DISCORD_WEBHOOK_URL = os.getenv("DISCORD_WEBHOOK_URL")
 
 # Regex Clusters
 CLUSTER_1_HIRING_INTENT = re.compile(r'(?i)\b(hiring|looking for a dev|need a developer|technical cofounder|freelance|agency|dev shop)\b')
@@ -101,41 +105,42 @@ def qualify_lead(title: str, body: str) -> Optional[Dict[str, str]]:
         print(f"[!] LLM API error: {e}")
         return None
 
-def send_discord_alert(post: Any, llm_result: Dict[str, str]):
-    """Send a rich embed webhook to Discord."""
-    if not DISCORD_WEBHOOK_URL:
-        print("[!] DISCORD_WEBHOOK_URL not set. Cannot send alert.")
-        return
-
-    author_url = f"https://reddit.com/user/{post.author.name}" if post.author else "https://reddit.com"
+def handle_qualified_lead(post: Any, llm_result: Dict[str, str]):
+    """Output qualified lead to terminal via Rich and save to CSV."""
     author_name = post.author.name if post.author else "[deleted]"
-    snippet = post.selftext[:200] + ("..." if len(post.selftext) > 200 else "")
-    
-    embed = {
-        "title": post.title,
-        "url": f"https://reddit.com{post.permalink}",
-        "color": 0x00FF00, # Green for pass
-        "author": {
-            "name": f"/u/{author_name}",
-            "url": author_url
-        },
-        "fields": [
-            {"name": "Subreddit", "value": f"r/{post.subreddit.display_name}", "inline": True},
-            {"name": "Pain Point", "value": llm_result.get("pain_point_summary", "N/A"), "inline": True},
-            {"name": "Snippet", "value": snippet if snippet.strip() else "*No body text*", "inline": False},
-            {"name": "LLM Reason", "value": llm_result.get("reason", ""), "inline": False}
-        ],
-        "footer": {"text": "🎯 SSP Sniper System"}
-    }
-    
-    payload = {"embeds": [embed]}
+    post_url = f"https://reddit.com{post.permalink}"
+    subreddit = f"r/{post.subreddit.display_name}"
+    pain_point = llm_result.get("pain_point_summary", "N/A")
+    reason = llm_result.get("reason", "")
+    timestamp = datetime.now().isoformat(timespec='seconds')
+
+    # Rich Terminal Output
+    table = Table(title="🎯 Qualified Lead Snipped!", style="green")
+    table.add_column("Field", style="cyan", no_wrap=True)
+    table.add_column("Details", style="white")
+
+    table.add_row("Title", post.title)
+    table.add_row("Subreddit", subreddit)
+    table.add_row("Author", f"/u/{author_name}")
+    table.add_row("URL", post_url)
+    table.add_row("Pain Point", pain_point)
+    table.add_row("LLM Reason", reason)
+
+    console.print(table)
+    print() # extra newline for spacing
+
+    # CSV Export
+    csv_file = "qualified_leads.csv"
+    file_exists = os.path.isfile(csv_file)
     
     try:
-        res = requests.post(DISCORD_WEBHOOK_URL, json=payload)
-        res.raise_for_status()
-        print(f"[+] Alert sent to Discord for post: {post.id}")
+        with open(csv_file, mode="a", newline="", encoding="utf-8") as f:
+            writer = csv.writer(f)
+            if not file_exists:
+                writer.writerow(["Timestamp", "Subreddit", "Author", "Post_URL", "Pain_Point", "Reason"])
+            writer.writerow([timestamp, subreddit, author_name, post_url, pain_point, reason])
     except Exception as e:
-        print(f"[!] Discord Webhook error: {e}")
+        console.print(f"[bold red][!] Error writing to CSV: {e}[/bold red]")
 
 def get_reddit_instance() -> praw.Reddit:
     return praw.Reddit(
@@ -165,8 +170,8 @@ def process_post(post: Any, conn: sqlite3.Connection):
         status = llm_result.get("status", "FAIL")
         
         if status == "PASS":
-            print(f"[+] Post {post.id} QUALIFIED. Dispatching alert...")
-            send_discord_alert(post, llm_result)
+            console.print(f"[bold green][+] Post {post.id} QUALIFIED. Handling lead...[/bold green]")
+            handle_qualified_lead(post, llm_result)
         else:
             print(f"[-] Post {post.id} REJECTED. Reason: {llm_result.get('reason')}")
 

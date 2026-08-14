@@ -6,7 +6,6 @@ A command-line interface (CLI) application designed to intercept high-intent, hi
 - Python 3.9+
 - A Reddit Developer App (for Client ID / Client Secret). Create one at `https://www.reddit.com/prefs/apps` (Select "script").
 - An OpenAI API Key (`gpt-4o-mini` is used by default).
-- A Discord Webhook URL.
 
 ## Installation
 
@@ -50,4 +49,4 @@ python ssp_sniper.py stream --subreddits SaaS,startups,Entrepreneur
 1. **Local Deduplication:** `leads.db` (SQLite) is created locally to track processed post IDs and prevent duplicate API processing and webhooks.
 2. **Regex Filter:** Checks Title + Body for technical pain points or hiring signals.
 3. **LLM Qualification:** Pings OpenAI with a strict system prompt to determine B2B legitimacy and budget.
-4. **Handoff:** Formats approved leads into a rich embed and pushes them to Discord.
+4. **Handoff:** Prints a clean, formatted table in the terminal using `rich` and appends the lead data to `qualified_leads.csv`.
