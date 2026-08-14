@@ -21,7 +21,7 @@ load_dotenv()
 REDDIT_CLIENT_ID = os.getenv("REDDIT_CLIENT_ID")
 REDDIT_CLIENT_SECRET = os.getenv("REDDIT_CLIENT_SECRET")
 REDDIT_USER_AGENT = os.getenv("REDDIT_USER_AGENT", "script:ssp-sniper:v1.0 (by /u/YOUR_USERNAME)")
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 
 # Regex Clusters
 CLUSTER_1_HIRING_INTENT = re.compile(r'(?i)\b(hiring|looking for a dev|need a developer|technical cofounder|freelance|agency|dev shop)\b')
@@ -79,18 +79,21 @@ def passes_regex(title: str, body: str) -> bool:
     return False
 
 def qualify_lead(title: str, body: str) -> Optional[Dict[str, str]]:
-    """Send post to OpenAI to qualify the lead."""
-    if not OPENAI_API_KEY:
-        print("[!] OPENAI_API_KEY not set. Skipping LLM qualification.")
+    """Send post to Groq to qualify the lead."""
+    if not GROQ_API_KEY:
+        print("[!] GROQ_API_KEY not set. Skipping LLM qualification.")
         return None
 
     try:
-        client = OpenAI(api_key=OPENAI_API_KEY)
+        client = OpenAI(
+            base_url="https://api.groq.com/openai/v1",
+            api_key=GROQ_API_KEY
+        )
         
         user_prompt = f"TITLE: {title}\n\nBODY:\n{body}"
         
         response = client.chat.completions.create(
-            model="gpt-4o-mini",
+            model="llama-3.3-70b-versatile",
             messages=[
                 {"role": "system", "content": LLM_SYSTEM_PROMPT.strip()},
                 {"role": "user", "content": user_prompt}

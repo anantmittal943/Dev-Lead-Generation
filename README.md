@@ -1,11 +1,11 @@
 # SSP Sniper 🎯
 
-A command-line interface (CLI) application designed to intercept high-intent, high-ticket development clients on Reddit. It utilizes a Regex pre-filter to cut down noise and relies on an LLM (OpenAI) to qualify business leads based on strict budget and technical criteria. High-quality leads are then routed to a Discord Webhook for immediate team action.
+A command-line interface (CLI) application designed to intercept high-intent, high-ticket development clients on Reddit. It utilizes a Regex pre-filter to cut down noise and relies on an LLM (Groq) to qualify business leads based on strict budget and technical criteria. High-quality leads are then formatted cleanly in the terminal and exported to a CSV.
 
 ## Prerequisites
 - Python 3.9+
 - A Reddit Developer App (for Client ID / Client Secret). Create one at `https://www.reddit.com/prefs/apps` (Select "script").
-- An OpenAI API Key (`gpt-4o-mini` is used by default).
+- A Groq API Key (`llama-3.3-70b-versatile` is used by default).
 
 ## Installation
 
@@ -48,5 +48,5 @@ python ssp_sniper.py stream --subreddits SaaS,startups,Entrepreneur
 ## How It Works
 1. **Local Deduplication:** `leads.db` (SQLite) is created locally to track processed post IDs and prevent duplicate API processing and webhooks.
 2. **Regex Filter:** Checks Title + Body for technical pain points or hiring signals.
-3. **LLM Qualification:** Pings OpenAI with a strict system prompt to determine B2B legitimacy and budget.
+3. **LLM Qualification:** Pings Groq Cloud API with a strict system prompt to determine B2B legitimacy and budget.
 4. **Handoff:** Prints a clean, formatted table in the terminal using `rich` and appends the lead data to `qualified_leads.csv`.
