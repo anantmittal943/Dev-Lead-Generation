@@ -1,0 +1,12 @@
+{
+  "name": "devvit-ssp-sniper",
+  "version": "0.0.1",
+  "description": "SSP Sniper on Devvit",
+  "main": "src/main.ts",
+  "dependencies": {
+    "@devvit/public-api": "^0.14.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.0.0"
+  }
+}
