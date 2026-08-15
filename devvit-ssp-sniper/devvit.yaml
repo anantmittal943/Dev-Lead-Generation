@@ -1,5 +1,5 @@
-name: devvit-ssp-sniper
+name: ssp-sniper
 version: 0.0.1
-description: SSP Sniper lead generation bot
+description: SSP Sniper lead generation app
 dependencies:
   '@devvit/public-api': ^0.14.0

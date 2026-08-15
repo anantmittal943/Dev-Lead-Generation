@@ -1,8 +1,8 @@
 {
   "name": "devvit-ssp-sniper",
   "version": "0.0.1",
-  "description": "SSP Sniper on Devvit",
-  "main": "src/main.ts",
+  "description": "SSP Sniper - High Intent Lead Generation",
+  "main": "src/server/index.ts",
   "dependencies": {
     "@devvit/public-api": "^0.14.0"
   },

@@ -4,6 +4,9 @@ __pycache__/
 *.pyo
 *.pyd
 
+# Node
+node_modules/
+
 # Virtual environments
 .venv/
 venv/
@@ -12,13 +15,14 @@ ENV/
 
 # Environment secrets
 .env
-.env.*
+*.env
 !.env.example
 
 # Local databases and app-generated state
 leads.db
 *.db
 *.sqlite3
+qualified_leads.csv
 
 # OS/editor files
 .DS_Store
