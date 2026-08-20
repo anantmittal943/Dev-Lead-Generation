@@ -50,12 +50,19 @@ REDDIT_USER_AGENT="ssp_hunter:v1.0 (by /u/YOUR_ACTUAL_REDDIT_USERNAME)"
 
 ## Usage
 
-### 1. Check Configuration
+### 1. Interactive TUI (New)
+For an easy-to-use, interactive dashboard experience, launch the Text User Interface:
+```bash
+ssp tui
+```
+This interface allows you to view detailed lead information, run hunts, and check configuration, all from a seamless terminal application.
+
+### 2. Check Configuration
 ```bash
 ssp config
 ```
 
-### 2. Discover Leads
+### 3. Discover Leads
 Run a discovery hunt for the AI -> Production niche:
 ```bash
 ssp hunt ai-production

@@ -95,5 +95,13 @@ def config(reset_db: bool = typer.Option(False, "--reset-db", help="WARNING: Dro
     console.print(f"Reddit User Agent: {'[green]✓ Configured[/green]' if settings.REDDIT_USER_AGENT else '[red]✗ Missing[/red]'}")
     console.print(f"Database URL: {settings.DATABASE_URL}")
 
+@app.command(name="tui")
+def run_tui():
+    """Launch the interactive Text User Interface (TUI)."""
+    from ssp.ui.tui import SSPHunterApp
+    init_db()
+    tui_app = SSPHunterApp()
+    tui_app.run()
+
 if __name__ == "__main__":
     app()
