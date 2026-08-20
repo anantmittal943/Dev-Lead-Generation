@@ -33,19 +33,19 @@ class HuntService:
             session.add(run)
             session.commit()
             
-            console.print(f"\n[bold]\[1/3] Searching Reddit[/bold]")
+            console.print(f"\n[bold][1/3] Searching Reddit[/bold]")
             reddit = RedditSource()
-            reddit_leads = await reddit.search(niche.reddit_queries)
+            reddit_leads = await reddit.search(niche.reddit_queries, fallback_queries=niche.reddit_fallback_queries, verbose=verbose)
             console.print(f"✓ {len(reddit_leads)} candidates")
             
-            console.print(f"\n[bold]\[2/3] Searching Hacker News[/bold]")
+            console.print(f"\n[bold][2/3] Searching Hacker News[/bold]")
             hn = HackerNewsSource()
-            hn_leads = await hn.search(niche.hn_queries)
+            hn_leads = await hn.search(niche.hn_queries, verbose=verbose)
             console.print(f"✓ {len(hn_leads)} candidates")
             
-            console.print(f"\n[bold]\[3/3] Running web discovery[/bold]")
+            console.print(f"\n[bold][3/3] Running web discovery[/bold]")
             web = WebSearchSource()
-            web_leads = await web.search(niche.web_queries)
+            web_leads = await web.search(niche.web_queries, verbose=verbose)
             console.print(f"✓ {len(web_leads)} candidates")
             
             all_raw = reddit_leads + hn_leads + web_leads
@@ -65,31 +65,69 @@ class HuntService:
             
             console.print(f"\n[bold]Analyzing signals...[/bold]")
             scored_leads = []
+            
+            # Score distribution tracking
+            score_dist = {"0-20": 0, "21-40": 0, "41-59": 0, "60+": 0}
+            
+            from ssp.core.config import settings
+            
             for lead in unique_leads:
                 lead.niche = niche_name
                 score, breakdown = niche.score_candidate(lead.title, lead.body or lead.snippet or "")
                 lead.deterministic_score = score
                 lead.score_breakdown = breakdown
                 
-                if score >= min_score:
+                # Distribution bucket
+                if score <= 20: score_dist["0-20"] += 1
+                elif score <= 40: score_dist["21-40"] += 1
+                elif score <= 59: score_dist["41-59"] += 1
+                else: score_dist["60+"] += 1
+                
+                # Content-aware threshold
+                if lead.content_type == "full_content":
+                    threshold = settings.FULL_CONTENT_MIN_SCORE
+                elif lead.content_type == "snippet_only":
+                    threshold = settings.SNIPPET_CONTENT_MIN_SCORE
+                else:
+                    threshold = settings.PARTIAL_CONTENT_MIN_SCORE
+                    
+                if verbose:
+                    console.print(f"\n[bold]Candidate:[/bold] {lead.title[:50]}...")
+                    console.print(f"[bold]Score:[/bold] {score}")
+                    console.print(f"[bold]Signals:[/bold]")
+                    for k, v in breakdown.items():
+                        console.print(f"  {'+' if v>0 else ''}{v} {k}")
+                
+                if score >= threshold:
                     scored_leads.append(lead)
                 else:
                     run.score_filtered += 1
+                    if verbose:
+                        console.print(f"[dim]Rejected because: threshold = {threshold}[/dim]")
             
-            console.print(f"✓ {len(scored_leads)} candidates passed scoring threshold ({min_score})")
+            if verbose:
+                console.print(f"\n[bold cyan]Score distribution:[/bold cyan]")
+                for k, v in score_dist.items():
+                    console.print(f"{k}: {v}")
+                    
+            console.print(f"✓ {len(scored_leads)} candidates passed content-aware thresholds")
             
             console.print(f"\n[bold]Qualifying with Groq...[/bold]")
             qualified_count = 0
             
             for lead in scored_leads:
                 run.llm_analyzed += 1
-                passed = self.qualifier.evaluate(lead, niche.get_system_prompt())
+                
+                # Pass content availability to prompt
+                system_prompt = niche.get_system_prompt(content_availability=lead.content_type.upper())
+                
+                passed = self.qualifier.evaluate(lead, system_prompt)
                 session.add(lead)
-                if passed:
+                if passed or lead.llm_status == "REVIEW":
                     qualified_count += 1
                     run.qualified += 1
                     if verbose:
-                        console.print(f"[green]Qualified: {lead.title} ({lead.source_url})[/green]")
+                        console.print(f"[green]Qualified ({lead.llm_status}): {lead.title} ({lead.source_url})[/green]")
                 elif verbose:
                     console.print(f"[dim]Rejected: {lead.llm_reason} - {lead.source_url}[/dim]")
             
@@ -98,7 +136,7 @@ class HuntService:
             console.print(f"✓ {qualified_count} qualified leads found")
             
             # Print the strongest leads
-            strong_leads = [l for l in scored_leads if l.llm_status == "PASS"]
+            strong_leads = [l for l in scored_leads if l.llm_status in ("PASS", "REVIEW")]
             for idx, lead in enumerate(strong_leads):
                 console.print(f"\n────────────────────────────────────────")
                 console.print(f"[bold]LEAD #{idx+1}[/bold]")

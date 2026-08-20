@@ -30,7 +30,11 @@ def hunt(
     service = HuntService()
     
     # Run async function
-    asyncio.run(service.execute_hunt(niche, min_score, verbose))
+    try:
+        asyncio.run(service.execute_hunt(niche, min_score, verbose))
+    finally:
+        from ssp.core.database import engine
+        engine.dispose()
 
 @app.command()
 def leads(

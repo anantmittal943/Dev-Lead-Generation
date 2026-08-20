@@ -5,10 +5,8 @@ class BaseNiche(ABC):
     name: str
     description: str
     
-    # Base configuration for scoring
-    min_score_threshold: int = 60
-    
     reddit_queries: List[str] = []
+    reddit_fallback_queries: List[str] = []
     hn_queries: List[str] = []
     web_queries: List[str] = []
     
@@ -18,5 +16,5 @@ class BaseNiche(ABC):
         return 0, {}
         
     @classmethod
-    def get_system_prompt(cls) -> str:
+    def get_system_prompt(cls, content_availability: str = "full_content") -> str:
         return ""

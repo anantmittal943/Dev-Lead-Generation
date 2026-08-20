@@ -6,6 +6,10 @@ class Settings(BaseSettings):
     REDDIT_USER_AGENT: str = "ssp_hunter:v1.0 (by /u/YOUR_USERNAME)"
     DATABASE_URL: str = "sqlite:///data/ssp.db"
     LOG_LEVEL: str = "INFO"
+    
+    FULL_CONTENT_MIN_SCORE: int = 60
+    PARTIAL_CONTENT_MIN_SCORE: int = 45
+    SNIPPET_CONTENT_MIN_SCORE: int = 35
 
     model_config = SettingsConfigDict(
         env_file=".env",

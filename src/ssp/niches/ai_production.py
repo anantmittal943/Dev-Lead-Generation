@@ -9,6 +9,13 @@ class AIProductionNiche(BaseNiche):
     reddit_queries = [
         "built with cursor", "built with lovable", "vibe coded", "ai generated app"
     ]
+    reddit_fallback_queries = [
+        'site:reddit.com "built with Cursor" production problem',
+        'site:reddit.com "built with Lovable" startup issue',
+        'site:reddit.com "vibe coded" app broken',
+        'site:reddit.com startup AI generated code production',
+        'site:reddit.com SaaS Cursor deployment issue'
+    ]
     hn_queries = [
         "built with cursor", "built with lovable", "vibe coded", "ai generated"
     ]
@@ -24,32 +31,26 @@ class AIProductionNiche(BaseNiche):
         score = 0
         breakdown = {}
 
-        # Commercial signals
         if re.search(r'\b(saas|startup|customers|paying|revenue|launch|company|business)\b', text):
             score += 25
             breakdown["Commercial context"] = 25
 
-        # Founder / Builder
         if re.search(r'\b(my app|our app|founder|we built|i built)\b', text):
             score += 20
             breakdown["Founder signal"] = 20
 
-        # AI Build Signal
         if re.search(r'\b(cursor|lovable|bolt|v0|replit|claude code|vibe code|ai generated)\b', text):
             score += 15
             breakdown["AI-built product"] = 15
 
-        # Production Pain
         if re.search(r'\b(deployment|production|security|database|scaling|crashes|reliability|technical debt)\b', text):
             score += 15
             breakdown["Production pain"] = 15
 
-        # Urgency / Hiring
         if re.search(r'\b(urgent|help|hire|looking for engineer|freelancer|stuck)\b', text):
             score += 10
             breakdown["Active intent to hire"] = 10
 
-        # Negative Signals
         if re.search(r'\b(student|homework|tutorial|toy project|no budget|equity only|learning)\b', text):
             score -= 50
             breakdown["Negative signal (hobby/student)"] = -50
@@ -57,9 +58,12 @@ class AIProductionNiche(BaseNiche):
         return score, breakdown
 
     @classmethod
-    def get_system_prompt(cls) -> str:
-        return """You are a ruthless B2B lead qualifier for a premium software engineering consultancy.
+    def get_system_prompt(cls, content_availability: str = "full_content") -> str:
+        return f"""You are a ruthless B2B lead qualifier for a premium software engineering consultancy.
 Positioning: "You built it with AI. We make it production-ready."
+
+CONTENT AVAILABILITY: {content_availability}
+Use only the available evidence. Do not assume budget, founder status, customer count, or urgency if not explicitly supported by the snippet.
 
 PASS CRITERIA (Must meet BOTH):
 1. The user built an app using an AI tool (Cursor, Lovable, Bolt, etc.).
@@ -67,9 +71,11 @@ PASS CRITERIA (Must meet BOTH):
 
 FAIL CRITERIA: Hobbyists, students, learning projects, $0 budget, equity-only, or general AI coding discussions without pain.
 
+REVIEW CRITERIA: The candidate appears potentially relevant but available information is insufficient to confidently verify commercial seriousness.
+
 Output strictly valid JSON with no markdown blocks:
-{
-  "status": "PASS" or "FAIL",
+{{
+  "status": "PASS" | "REVIEW" | "FAIL",
   "confidence": 0-100,
   "lead_type": "ai_production",
   "reason": "Concise explanation.",
@@ -78,4 +84,4 @@ Output strictly valid JSON with no markdown blocks:
   "urgency": "low" | "medium" | "high",
   "decision_maker_likelihood": "low" | "medium" | "high",
   "recommended_action": "ignore" | "review" | "contact"
-}"""
+}}"""

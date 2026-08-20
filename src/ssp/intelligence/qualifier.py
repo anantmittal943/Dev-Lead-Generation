@@ -41,15 +41,17 @@ class GroqQualifier:
             lead.decision_maker_likelihood = result.get("decision_maker_likelihood", "low")
             lead.recommended_action = result.get("recommended_action", "ignore")
             
-            return lead.llm_status == "PASS"
+            return lead.llm_status in ("PASS", "REVIEW")
             
         except Exception as e:
-            # Try a graceful fallback if the specific model fails (e.g. the 404 from earlier)
-            if "model_not_found" in str(e):
-                self.model = "llama-3.1-70b-versatile"
-                return self.evaluate(lead, system_prompt)
-            else:
-                lead.llm_status = "ERROR"
-                lead.llm_reason = f"API Error: {str(e)}"
-                console.print(f"[dim red]LLM API Error on lead {lead.source_id}: {e}[/dim red]")
-                return False
+            # Handle decommissioned models or model_not_found errors
+            error_str = str(e).lower()
+            if "model_not_found" in error_str or "model_decommissioned" in error_str:
+                if self.model != "llama3-70b-8192":
+                    self.model = "llama3-70b-8192"
+                    return self.evaluate(lead, system_prompt)
+                
+            lead.llm_status = "ERROR"
+            lead.llm_reason = f"API Error: {str(e)}"
+            console.print(f"[dim red]LLM API Error on lead {lead.source_id}: {e}[/dim red]")
+            return False
