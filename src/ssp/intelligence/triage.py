@@ -12,7 +12,7 @@ class TriageStage:
             base_url="https://api.groq.com/openai/v1",
             api_key=settings.GROQ_API_KEY
         )
-        self.model = "llama-3.3-70b-versatile"
+        self.model = "openai/gpt-oss-120b"
 
     def evaluate(self, candidate: Candidate) -> bool:
         system_prompt = """You are Stage 1 Event Triage for a premium engineering consultancy.
@@ -42,31 +42,41 @@ CONTENT:
 {candidate.content}
 """
         
-        try:
-            response = self.client.chat.completions.create(
-                model=self.model,
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_prompt}
-                ],
-                response_format={"type": "json_object"},
-                temperature=0.0
-            )
-            
-            result = json.loads(response.choices[0].message.content)
-            
-            candidate.triage_relevant = result.get("relevant", False)
-            candidate.triage_event_detected = result.get("event_detected", False)
-            candidate.triage_actor_type = result.get("actor_type", "UNKNOWN")
-            candidate.triage_technical_pain = result.get("technical_pain", 0)
-            candidate.triage_commercial_signal = result.get("commercial_signal", 0)
-            candidate.triage_urgency = result.get("urgency", 0)
-            candidate.triage_confidence = result.get("confidence", 0)
-            candidate.triage_reason = result.get("reason", "")
-            
-            return candidate.triage_relevant and candidate.triage_event_detected
-            
-        except Exception as e:
-            candidate.triage_relevant = False
-            candidate.triage_reason = f"API Error: {str(e)}"
-            return False
+        import time
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                response = self.client.chat.completions.create(
+                    model=self.model,
+                    messages=[
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": user_prompt}
+                    ],
+                    response_format={"type": "json_object"},
+                    temperature=0.0
+                )
+                
+                result = json.loads(response.choices[0].message.content)
+                
+                candidate.triage_relevant = result.get("relevant", False)
+                candidate.triage_event_detected = result.get("event_detected", False)
+                candidate.triage_actor_type = result.get("actor_type", "UNKNOWN")
+                candidate.triage_technical_pain = result.get("technical_pain", 0)
+                candidate.triage_commercial_signal = result.get("commercial_signal", 0)
+                candidate.triage_urgency = result.get("urgency", 0)
+                candidate.triage_confidence = result.get("confidence", 0)
+                candidate.triage_reason = result.get("reason", "")
+                
+                return candidate.triage_relevant and candidate.triage_event_detected
+                
+            except Exception as e:
+                error_str = str(e).lower()
+                if "429" in error_str or "rate limit" in error_str:
+                    if attempt < max_retries - 1:
+                        time.sleep(5)  # Wait for TPM bucket to refill
+                        continue
+                
+                candidate.triage_relevant = False
+                candidate.triage_reason = f"API Error: {str(e)}"
+                return False
+        return False

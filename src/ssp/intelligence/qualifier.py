@@ -12,7 +12,7 @@ class QualificationStage:
             base_url="https://api.groq.com/openai/v1",
             api_key=settings.GROQ_API_KEY
         )
-        self.model = "llama-3.3-70b-versatile"
+        self.model = "openai/gpt-oss-120b"
 
     def evaluate(self, candidate: Candidate) -> bool:
         system_prompt = """You are Stage 2 Opportunity Qualification for a premium engineering consultancy.
@@ -47,35 +47,45 @@ CONTENT:
 {candidate.content}
 """
         
-        try:
-            response = self.client.chat.completions.create(
-                model=self.model,
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_prompt}
-                ],
-                response_format={"type": "json_object"},
-                temperature=0.0
-            )
-            
-            result = json.loads(response.choices[0].message.content)
-            
-            candidate.qualification_status = result.get("status", "REJECTED")
-            candidate.qualification_confidence = result.get("confidence", 0)
-            candidate.pain_point_summary = result.get("pain_point_summary", "")
-            candidate.recommended_action = result.get("recommended_action", "")
-            
-            # Opportunity Score Calculation
-            buyer_likelihood = 90 if candidate.triage_actor_type in ("FOUNDER", "BUSINESS_OWNER") else (50 if candidate.triage_actor_type == "UNKNOWN" else 10)
-            tp = candidate.triage_technical_pain or 0
-            urg = candidate.triage_urgency or 0
-            cs = candidate.triage_commercial_signal or 0
-            
-            candidate.opportunity_score = (buyer_likelihood * 0.35) + (tp * 0.30) + (urg * 0.20) + (cs * 0.15)
-            
-            return candidate.qualification_status in ("HOT", "WARM", "WATCH")
-            
-        except Exception as e:
-            candidate.qualification_status = "ERROR"
-            candidate.recommended_action = f"API Error: {str(e)}"
-            return False
+        import time
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                response = self.client.chat.completions.create(
+                    model=self.model,
+                    messages=[
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": user_prompt}
+                    ],
+                    response_format={"type": "json_object"},
+                    temperature=0.0
+                )
+                
+                result = json.loads(response.choices[0].message.content)
+                
+                candidate.qualification_status = result.get("status", "REJECTED")
+                candidate.qualification_confidence = result.get("confidence", 0)
+                candidate.pain_point_summary = result.get("pain_point_summary", "")
+                candidate.recommended_action = result.get("recommended_action", "")
+                
+                # Opportunity Score Calculation
+                buyer_likelihood = 90 if candidate.triage_actor_type in ("FOUNDER", "BUSINESS_OWNER") else (50 if candidate.triage_actor_type == "UNKNOWN" else 10)
+                tp = candidate.triage_technical_pain or 0
+                urg = candidate.triage_urgency or 0
+                cs = candidate.triage_commercial_signal or 0
+                
+                candidate.opportunity_score = (buyer_likelihood * 0.35) + (tp * 0.30) + (urg * 0.20) + (cs * 0.15)
+                
+                return candidate.qualification_status in ("HOT", "WARM", "WATCH")
+                
+            except Exception as e:
+                error_str = str(e).lower()
+                if "429" in error_str or "rate limit" in error_str:
+                    if attempt < max_retries - 1:
+                        time.sleep(5)  # Wait for TPM bucket to refill
+                        continue
+                
+                candidate.qualification_status = "ERROR"
+                candidate.recommended_action = f"API Error: {str(e)}"
+                return False
+        return False
