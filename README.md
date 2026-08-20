@@ -1,60 +1,78 @@
-# SSP Sniper 🎯 (Devvit Edition)
+# SSP Hunter
 
-A fully modern lead generation system built on **Reddit's Developer Platform (Devvit)**. It intercepts high-intent, high-ticket development clients on Reddit in real-time. It utilizes a Regex pre-filter to cut down noise and relies on an LLM (Groq) to qualify business leads based on strict budget and technical criteria. High-quality leads are then sent via webhook to your local terminal, where they are formatted cleanly and exported to a CSV.
+**Engineering Opportunity Intelligence CLI**
+
+SSP Hunter is a local-first engineering opportunity intelligence system. It discovers, analyzes, scores, qualifies, and organizes high-intent prospects experiencing specific engineering problems.
+
+Unlike generic scrapers, it uses a multi-stage deterministic signal pipeline combined with Groq LLM (LLaMA-3.3-70b) to ensure only highly qualified B2B leads make it to your workflow.
+
+## Supported Niches
+1. **AI → Production (`ai-production`)**: Prospects who built prototypes using AI tools (Cursor, Lovable, Bolt) and are struggling with scaling, production deployment, and reliability.
+2. **Codebase Takeover (`takeover`)**: Founders and businesses whose previous developer left or agency disappeared, leaving them with a legacy codebase that needs rescuing.
 
 ## Architecture
 
-Because Reddit's old `prefs/apps` (PRAW/Python) scripts are being phased out in favor of the new platform, SSP Sniper is now split into two components:
-1. **The Devvit App (`devvit-ssp-sniper/`):** A TypeScript application that runs natively on Reddit's servers. It listens for `PostSubmit` events, runs the Regex, pings Groq, and sends a webhook.
-2. **The Local Receiver (`local_receiver.py`):** A lightweight Python server running on your machine that receives the webhook from Reddit, prints the colored Rich table, and appends the lead to `qualified_leads.csv`.
+* **CLI:** `Typer` & `Rich`
+* **Configuration:** Pydantic
+* **Database:** SQLite & `SQLModel`
+* **Data Sources:** 
+  * Reddit (via open JSON endpoints)
+  * Hacker News (via Algolia)
+  * Web Discovery (via DuckDuckGo)
+* **LLM:** Groq (`llama-3.1-70b-versatile` fallback) via OpenAI SDK
 
-## Prerequisites
-- Node.js (v18+) and npm
-- Python 3.9+ (with the `rich` package installed: `pip install rich`)
-- A Groq API Key (`llama-3.3-70b-versatile` is used by default).
-- The Devvit CLI: `npm install -g @devvit/cli`
-- [ngrok](https://ngrok.com/) (or a similar tool) to expose your local receiver to the internet.
+## Installation
 
-## Installation & Setup
+```bash
+# Ensure you have Python 3.11+
+python -m venv .venv
+# Activate virtual environment
+.\.venv\Scripts\Activate.ps1   # Windows
+# or source .venv/bin/activate # Linux/Mac
 
-### 1. Start the Local Receiver
-Run the Python receiver in your terminal:
-```bash
-python local_receiver.py
-```
-It will start listening on port 8080.
-
-### 2. Expose with ngrok
-In a separate terminal, expose port 8080 to the internet so Reddit can reach it:
-```bash
-ngrok http 8080
-```
-*Copy the `Forwarding` URL (e.g., `https://1234-abcd.ngrok-free.app`).*
-
-### 3. Deploy to Reddit
-Navigate to the Devvit app folder:
-```bash
-cd devvit-ssp-sniper
-```
-Login to Devvit and upload your app:
-```bash
-devvit login
-devvit upload
-```
-Install the app to your target subreddit (or a test sandbox subreddit):
-```bash
-devvit install <your-subreddit>
+# Install the package locally
+pip install -e .
 ```
 
-### 4. Configure App Settings
-Once installed, you must configure your API keys in the Devvit settings. You can do this via the Reddit UI (Mod Tools -> Devvit Apps -> Settings) or via the CLI:
+## Environment Setup
+
+Copy `.env.example` to `.env`:
 ```bash
-devvit settings set groq_api_key "YOUR_GROQ_KEY"
-devvit settings set export_webhook_url "YOUR_NGROK_URL"
+cp .env.example .env
+```
+Update your `.env` with real credentials:
+```env
+GROQ_API_KEY=gsk_your_real_key_here
+REDDIT_USER_AGENT="ssp_hunter:v1.0 (by /u/YOUR_ACTUAL_REDDIT_USERNAME)"
 ```
 
-## How It Works
-1. **Real-time Trigger:** Devvit natively detects when a new post is submitted to the subreddit.
-2. **Regex Filter:** Checks Title + Body for technical pain points or hiring signals directly on Reddit's edge.
-3. **LLM Qualification:** Pings Groq Cloud API with a strict system prompt to determine B2B legitimacy and budget.
-4. **Handoff:** Sends a POST request to your `export_webhook_url`. Your `local_receiver.py` catches it, prints a clean formatted table in the terminal using `rich`, and appends the lead data to `qualified_leads.csv`.
+*Note: If your REDDIT_USER_AGENT is generic, Reddit will block your requests (429/403).*
+
+## Usage
+
+### 1. Check Configuration
+```bash
+ssp config
+```
+
+### 2. Discover Leads
+Run a discovery hunt for the AI -> Production niche:
+```bash
+ssp hunt ai-production
+```
+Run a hunt for the Codebase Takeover niche, showing verbose rejection reasons:
+```bash
+ssp hunt takeover --verbose
+```
+
+### 3. View Saved Leads
+View a table of all leads stored in the local SQLite database:
+```bash
+ssp leads
+ssp leads --niche ai-production
+ssp leads --min-score 70
+```
+
+## Advanced Customization
+* **New Niches:** Add a new class inheriting from `BaseNiche` in `src/ssp/niches/`. Define the regex signals and scoring matrix.
+* **Database Location:** Stored by default in `data/ssp.db`. Configurable via `DATABASE_URL` in `.env`.
