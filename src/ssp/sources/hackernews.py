@@ -1,49 +1,52 @@
 import httpx
 import urllib.parse
-from typing import List
+from typing import List, Dict
 from ssp.sources.base import BaseSource
-from ssp.core.models import Lead
+from ssp.core.models import Candidate
 from rich.console import Console
 
 console = Console()
 
 class HackerNewsSource(BaseSource):
-    async def search(self, queries: List[str], fallback_queries: List[str] = None, verbose: bool = False) -> List[Lead]:
-        leads = []
-        # Add realistic User-Agent to prevent Algolia 403 blocks
+    async def search(self, queries: List[Dict[str, str]], verbose: bool = False) -> List[Candidate]:
+        candidates = []
         headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"}
         
         async with httpx.AsyncClient(timeout=15.0, headers=headers) as client:
-            for query in queries:
+            for q_obj in queries:
+                query = q_obj["query"]
+                event_type = q_obj["event_type"]
+                
                 if verbose:
                     console.print(f"\n[cyan]SOURCE: HACKER NEWS[/cyan]")
+                    console.print(f"[cyan]EVENT: {event_type}[/cyan]")
                     console.print(f"[cyan]QUERY:\n{query}[/cyan]")
                     
                 try:
-                    url = f"http://hn.algolia.com/api/v1/search_by_date?query={urllib.parse.quote(query)}&tags=story"
-                    resp = await client.get(url)
+                    url = f"https://hn.algolia.com/api/v1/search_by_date?query={urllib.parse.quote(query)}"
+                    resp = await client.get(url, follow_redirects=True)
                     
                     if resp.status_code == 200:
                         data = resp.json()
                         hits = data.get('hits', [])
                         valid_hits = 0
                         for hit in hits:
-                            leads.append(Lead(
-                                niche="",
+                            candidates.append(Candidate(
                                 source="Hacker News",
-                                source_id=f"hn_{hit['objectID']}",
-                                title=hit.get('title', ''),
-                                body=hit.get('story_text', '') or '',
-                                author=hit.get('author', 'unknown'),
                                 source_url=f"https://news.ycombinator.com/item?id={hit['objectID']}",
-                                content_type="full_content"
+                                title=hit.get('title') or hit.get('story_title') or '',
+                                content=hit.get('story_text') or hit.get('comment_text') or '',
+                                content_type="FULL_CONTENT",
+                                author=hit.get('author', 'unknown'),
+                                query=query,
+                                event_type=event_type,
+                                raw_metadata=hit
                             ))
                             valid_hits += 1
                             
                         if verbose:
                             console.print(f"[green]RAW RESULTS:\n{len(hits)}[/green]")
                             console.print(f"[green]NORMALIZED:\n{valid_hits}[/green]")
-                            console.print(f"[green]CONTENT TYPE:\nFULL_CONTENT[/green]")
                             console.print(f"────────────────────────────")
                     else:
                         if verbose:
@@ -58,4 +61,4 @@ class HackerNewsSource(BaseSource):
                     else:
                         console.print(f"[red]HN exception during search: {e}[/red]")
                     
-        return leads
+        return candidates

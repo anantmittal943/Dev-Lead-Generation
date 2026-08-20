@@ -1,151 +1,184 @@
 import asyncio
+import re
 from typing import List, Type
 from sqlmodel import Session, select
 from ssp.core.database import engine
-from ssp.core.models import Lead, HuntRun
-from ssp.niches.base import BaseNiche
-from ssp.niches.ai_production import AIProductionNiche
-from ssp.niches.codebase_takeover import CodebaseTakeoverNiche
+from ssp.core.models import Candidate, HuntRun, QueryPerformance
+from ssp.events.registry import EVENT_REGISTRY, NicheEventConfig
+from ssp.events.query_generator import EventQueryGenerator
 from ssp.sources.reddit import RedditSource
 from ssp.sources.hackernews import HackerNewsSource
 from ssp.sources.web_search import WebSearchSource
-from ssp.intelligence.qualifier import GroqQualifier
+from ssp.intelligence.triage import TriageStage
+from ssp.intelligence.qualifier import QualificationStage
 from rich.console import Console
+from rich.panel import Panel
 
 console = Console()
 
 class HuntService:
     def __init__(self):
-        self.qualifier = GroqQualifier()
+        self.triage = TriageStage()
+        self.qualifier = QualificationStage()
         
-    def get_niche(self, niche_name: str) -> Type[BaseNiche]:
-        if niche_name == "ai-production":
-            return AIProductionNiche
-        elif niche_name == "takeover":
-            return CodebaseTakeoverNiche
-        raise ValueError(f"Unknown niche: {niche_name}")
+    def _basic_garbage_filter(self, text: str) -> bool:
+        """Returns True if the text is obvious garbage and should be rejected."""
+        t = text.lower()
+        if re.search(r'\b(tutorial|how to|documentation|github\.com/.*/blob|stackoverflow|course|learning|homework)\b', t):
+            return True
+        return False
 
-    async def execute_hunt(self, niche_name: str, min_score: int, verbose: bool):
-        niche = self.get_niche(niche_name)
+    async def execute_hunt(self, niche_name: str, verbose: bool, limit: int = None, source: str = None, dry_run: bool = False):
+        if niche_name not in EVENT_REGISTRY:
+            console.print(f"[bold red]Unknown niche: {niche_name}[/bold red]")
+            return
+            
+        config: NicheEventConfig = EVENT_REGISTRY[niche_name]
+        queries = EventQueryGenerator.generate_queries(config)
+        
+        if limit:
+            queries = queries[:limit]
+            
+        console.print(f"Generating event queries...\n✓ {len(queries)} queries")
+        
+        console.print(f"\n[bold]Discovering opportunities...[/bold]\n")
+        
+        all_raw_candidates: List[Candidate] = []
         
         with Session(engine) as session:
-            run = HuntRun(niche=niche_name)
-            session.add(run)
-            session.commit()
+            run = HuntRun(niche=niche_name, queries_generated=len(queries))
+            if not dry_run:
+                session.add(run)
+                session.commit()
             
-            console.print(f"\n[bold][1/3] Searching Reddit[/bold]")
-            reddit = RedditSource()
-            reddit_leads = await reddit.search(niche.reddit_queries, fallback_queries=niche.reddit_fallback_queries, verbose=verbose)
-            console.print(f"✓ {len(reddit_leads)} candidates")
+            # --- Discovery ---
+            if not source or source.lower() == "reddit":
+                reddit = RedditSource()
+                reddit_leads = await reddit.search(queries, verbose=verbose)
+                console.print(f"Reddit Discovery\n✓ {len(reddit_leads)} candidates\n")
+                all_raw_candidates.extend(reddit_leads)
+                
+            if not source or source.lower() == "web":
+                web = WebSearchSource()
+                web_leads = await web.search(queries, verbose=verbose)
+                console.print(f"Web Search\n✓ {len(web_leads)} candidates\n")
+                all_raw_candidates.extend(web_leads)
+                
+            if not source or source.lower() == "hn":
+                hn = HackerNewsSource()
+                hn_leads = await hn.search(queries, verbose=verbose)
+                console.print(f"Hacker News\n✓ {len(hn_leads)} candidates\n")
+                all_raw_candidates.extend(hn_leads)
+                
+            run.raw_candidates = len(all_raw_candidates)
             
-            console.print(f"\n[bold][2/3] Searching Hacker News[/bold]")
-            hn = HackerNewsSource()
-            hn_leads = await hn.search(niche.hn_queries, verbose=verbose)
-            console.print(f"✓ {len(hn_leads)} candidates")
+            console.print(f"────────────────────────────────\n")
+            console.print(f"Raw candidates\n{run.raw_candidates}\n")
             
-            console.print(f"\n[bold][3/3] Running web discovery[/bold]")
-            web = WebSearchSource()
-            web_leads = await web.search(niche.web_queries, verbose=verbose)
-            console.print(f"✓ {len(web_leads)} candidates")
-            
-            all_raw = reddit_leads + hn_leads + web_leads
-            run.raw_candidates = len(all_raw)
-            
-            console.print(f"\n[bold]Deduplicating...[/bold]")
-            unique_leads = []
-            for lead in all_raw:
-                # Check DB for duplicate
-                existing = session.exec(select(Lead).where(Lead.source_url == lead.source_url)).first()
-                if not existing:
-                    unique_leads.append(lead)
-                else:
+            # --- Deduplication ---
+            unique_candidates = []
+            seen_urls = set()
+            for cand in all_raw_candidates:
+                if cand.source_url in seen_urls:
                     run.duplicates_removed += 1
+                    continue
                     
-            console.print(f"✓ {run.duplicates_removed} duplicates removed")
-            
-            console.print(f"\n[bold]Analyzing signals...[/bold]")
-            scored_leads = []
-            
-            # Score distribution tracking
-            score_dist = {"0-20": 0, "21-40": 0, "41-59": 0, "60+": 0}
-            
-            from ssp.core.config import settings
-            
-            for lead in unique_leads:
-                lead.niche = niche_name
-                score, breakdown = niche.score_candidate(lead.title, lead.body or lead.snippet or "")
-                lead.deterministic_score = score
-                lead.score_breakdown = breakdown
+                if not dry_run:
+                    existing = session.exec(select(Candidate).where(Candidate.source_url == cand.source_url)).first()
+                    if existing:
+                        run.duplicates_removed += 1
+                        continue
+                        
+                seen_urls.add(cand.source_url)
+                unique_candidates.append(cand)
                 
-                # Distribution bucket
-                if score <= 20: score_dist["0-20"] += 1
-                elif score <= 40: score_dist["21-40"] += 1
-                elif score <= 59: score_dist["41-59"] += 1
-                else: score_dist["60+"] += 1
-                
-                # Content-aware threshold
-                if lead.content_type == "full_content":
-                    threshold = settings.FULL_CONTENT_MIN_SCORE
-                elif lead.content_type == "snippet_only":
-                    threshold = settings.SNIPPET_CONTENT_MIN_SCORE
+            console.print(f"Duplicates removed\n{run.duplicates_removed}\n")
+            
+            # --- Garbage Filter ---
+            filtered_candidates = []
+            for cand in unique_candidates:
+                full_text = f"{cand.title} {cand.content}"
+                if self._basic_garbage_filter(full_text):
+                    run.garbage_rejected += 1
+                    cand.garbage_filtered = True
+                    if verbose:
+                        console.print(f"[dim]GARBAGE FILTER REJECTED: {cand.title}[/dim]")
                 else:
-                    threshold = settings.PARTIAL_CONTENT_MIN_SCORE
+                    filtered_candidates.append(cand)
                     
+            console.print(f"Garbage rejected\n{run.garbage_rejected}\n")
+            
+            # --- LLM Stage 1: Triage ---
+            console.print(f"Sent to Event Triage\n{len(filtered_candidates)}\n")
+            
+            triaged_relevant = []
+            for cand in filtered_candidates:
+                run.triage_analyzed += 1
+                cand.niche = niche_name
+                is_relevant = self.triage.evaluate(cand)
+                if is_relevant:
+                    triaged_relevant.append(cand)
+                    run.triage_relevant += 1
+                    if verbose:
+                        console.print(f"[cyan]TRIAGE RELEVANT: {cand.event_type} - {cand.title}[/cyan]")
+                else:
+                    if verbose:
+                        console.print(f"[dim]TRIAGE REJECTED: {cand.triage_reason}[/dim]")
+                        
+            console.print(f"Relevant events\n{run.triage_relevant}\n")
+            
+            # --- LLM Stage 2: Qualification ---
+            hot_count = warm_count = watch_count = 0
+            
+            for cand in triaged_relevant:
+                run.deep_qualified += 1
+                self.qualifier.evaluate(cand)
+                
+                if cand.qualification_status == "HOT": hot_count += 1
+                elif cand.qualification_status == "WARM": warm_count += 1
+                elif cand.qualification_status == "WATCH": watch_count += 1
+                
                 if verbose:
-                    console.print(f"\n[bold]Candidate:[/bold] {lead.title[:50]}...")
-                    console.print(f"[bold]Score:[/bold] {score}")
-                    console.print(f"[bold]Signals:[/bold]")
-                    for k, v in breakdown.items():
-                        console.print(f"  {'+' if v>0 else ''}{v} {k}")
+                    console.print(f"────────────────────────")
+                    console.print(f"SOURCE: {cand.source}")
+                    console.print(f"EVENT: {cand.event_type}")
+                    console.print(f"QUERY: {cand.query}")
+                    console.print(f"ACTOR: {cand.triage_actor_type}")
+                    console.print(f"STATUS: [bold]{cand.qualification_status}[/bold]")
+                    if cand.opportunity_score is not None:
+                        console.print(f"SCORE: {cand.opportunity_score:.1f}")
+                    console.print(f"REASON: {cand.qualification_status} - {cand.pain_point_summary}")
                 
-                if score >= threshold:
-                    scored_leads.append(lead)
-                else:
-                    run.score_filtered += 1
-                    if verbose:
-                        console.print(f"[dim]Rejected because: threshold = {threshold}[/dim]")
+            console.print(f"Deep qualified\n{run.deep_qualified}\n")
+            console.print(f"────────────────────────────────\n")
+            console.print(f"🔥 HOT\n{hot_count}\n")
+            console.print(f"🟡 WARM\n{warm_count}\n")
+            console.print(f"👀 WATCH\n{watch_count}\n")
             
-            if verbose:
-                console.print(f"\n[bold cyan]Score distribution:[/bold cyan]")
-                for k, v in score_dist.items():
-                    console.print(f"{k}: {v}")
+            run.hot_leads = hot_count
+            run.warm_leads = warm_count
+            run.watch_leads = watch_count
+            
+            # Update Query Performance Tracker & Save Candidates
+            if not dry_run:
+                for cand in unique_candidates:
+                    session.add(cand)
                     
-            console.print(f"✓ {len(scored_leads)} candidates passed content-aware thresholds")
-            
-            console.print(f"\n[bold]Qualifying with Groq...[/bold]")
-            qualified_count = 0
-            
-            for lead in scored_leads:
-                run.llm_analyzed += 1
+                    if cand.query:
+                        perf = session.exec(select(QueryPerformance).where(QueryPerformance.query == cand.query)).first()
+                        if not perf:
+                            perf = QueryPerformance(query=cand.query, event_type=cand.event_type, source=cand.source)
+                            session.add(perf)
+                        
+                        perf.times_run += 1
+                        perf.raw_candidates += 1
+                        if getattr(cand, "triage_relevant", False):
+                            perf.relevant_candidates += 1
+                        if getattr(cand, "qualification_status", "") == "HOT":
+                            perf.hot_leads += 1
+                        elif getattr(cand, "qualification_status", "") == "WARM":
+                            perf.warm_leads += 1
+                        elif getattr(cand, "qualification_status", "") == "REJECTED":
+                            perf.rejected_candidates += 1
                 
-                # Pass content availability to prompt
-                system_prompt = niche.get_system_prompt(content_availability=lead.content_type.upper())
-                
-                passed = self.qualifier.evaluate(lead, system_prompt)
-                session.add(lead)
-                if passed or lead.llm_status == "REVIEW":
-                    qualified_count += 1
-                    run.qualified += 1
-                    if verbose:
-                        console.print(f"[green]Qualified ({lead.llm_status}): {lead.title} ({lead.source_url})[/green]")
-                elif verbose:
-                    console.print(f"[dim]Rejected: {lead.llm_reason} - {lead.source_url}[/dim]")
-            
-            session.commit()
-            
-            console.print(f"✓ {qualified_count} qualified leads found")
-            
-            # Print the strongest leads
-            strong_leads = [l for l in scored_leads if l.llm_status in ("PASS", "REVIEW")]
-            for idx, lead in enumerate(strong_leads):
-                console.print(f"\n────────────────────────────────────────")
-                console.print(f"[bold]LEAD #{idx+1}[/bold]")
-                console.print(f"Score: {lead.deterministic_score}/100")
-                console.print(f"Niche: {niche.description}")
-                console.print(f"Source: {lead.source}")
-                console.print(f"\nTitle:\n{lead.title}")
-                console.print(f"\nPain Point:\n{lead.pain_point}")
-                console.print(f"\nWhy qualified:\n{lead.llm_reason}")
-                console.print(f"\nAction:\n[bold green]{str(lead.recommended_action).upper()}[/bold green] - {lead.source_url}")
-                
-            console.print(f"\n────────────────────────────────────────\n")
+                session.commit()

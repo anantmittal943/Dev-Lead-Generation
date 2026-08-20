@@ -1,24 +1,51 @@
 import json
 from openai import OpenAI
 from ssp.core.config import settings
-from ssp.core.models import Lead
+from ssp.core.models import Candidate
 from rich.console import Console
 
 console = Console()
 
-class GroqQualifier:
+class QualificationStage:
     def __init__(self):
         self.client = OpenAI(
             base_url="https://api.groq.com/openai/v1",
             api_key=settings.GROQ_API_KEY
         )
-        # We'll use 3.3 if available, but fallback to 3.1 or 8192 if needed based on previous debugging
-        # As per instructions: "llama-3.3-70b-versatile"
         self.model = "llama-3.3-70b-versatile"
 
-    def evaluate(self, lead: Lead, system_prompt: str) -> bool:
-        """Evaluate a lead using the LLM. Returns True if passed, False otherwise."""
-        user_prompt = f"TITLE: {lead.title}\n\nCONTENT:\n{lead.body}\n{lead.snippet or ''}"
+    def evaluate(self, candidate: Candidate) -> bool:
+        system_prompt = """You are Stage 2 Opportunity Qualification for a premium engineering consultancy.
+Evaluate the triage data and content to classify the opportunity.
+
+Use ONLY available evidence. For snippet-only content, it's often best to classify as WATCH and recommend manual inspection.
+
+Definitions:
+HOT: Strong evidence of relevant technical event, decision maker, meaningful pain, commercial context, and urgency.
+WARM: Relevant pain and possible commercial opportunity, but some information is missing.
+WATCH: Potential signal, but insufficient information.
+REJECTED: Clearly irrelevant.
+
+Output strictly valid JSON:
+{
+  "status": "HOT" | "WARM" | "WATCH" | "REJECTED",
+  "confidence": 0-100,
+  "pain_point_summary": "...",
+  "recommended_action": "...",
+  "reason": "..."
+}"""
+
+        user_prompt = f"""
+EVENT: {candidate.event_type}
+CONTENT TYPE: {candidate.content_type}
+TRIAGE PAIN: {candidate.triage_technical_pain}
+TRIAGE COMMERCIAL: {candidate.triage_commercial_signal}
+TRIAGE ACTOR: {candidate.triage_actor_type}
+
+TITLE: {candidate.title}
+CONTENT:
+{candidate.content}
+"""
         
         try:
             response = self.client.chat.completions.create(
@@ -33,25 +60,22 @@ class GroqQualifier:
             
             result = json.loads(response.choices[0].message.content)
             
-            lead.llm_status = result.get("status", "FAIL")
-            lead.llm_confidence = result.get("confidence", 0)
-            lead.llm_reason = result.get("reason", "")
-            lead.pain_point = result.get("pain_point_summary", "")
-            lead.urgency = result.get("urgency", "low")
-            lead.decision_maker_likelihood = result.get("decision_maker_likelihood", "low")
-            lead.recommended_action = result.get("recommended_action", "ignore")
+            candidate.qualification_status = result.get("status", "REJECTED")
+            candidate.qualification_confidence = result.get("confidence", 0)
+            candidate.pain_point_summary = result.get("pain_point_summary", "")
+            candidate.recommended_action = result.get("recommended_action", "")
             
-            return lead.llm_status in ("PASS", "REVIEW")
+            # Opportunity Score Calculation
+            buyer_likelihood = 90 if candidate.triage_actor_type in ("FOUNDER", "BUSINESS_OWNER") else (50 if candidate.triage_actor_type == "UNKNOWN" else 10)
+            tp = candidate.triage_technical_pain or 0
+            urg = candidate.triage_urgency or 0
+            cs = candidate.triage_commercial_signal or 0
+            
+            candidate.opportunity_score = (buyer_likelihood * 0.35) + (tp * 0.30) + (urg * 0.20) + (cs * 0.15)
+            
+            return candidate.qualification_status in ("HOT", "WARM", "WATCH")
             
         except Exception as e:
-            # Handle decommissioned models or model_not_found errors
-            error_str = str(e).lower()
-            if "model_not_found" in error_str or "model_decommissioned" in error_str:
-                if self.model != "llama3-70b-8192":
-                    self.model = "llama3-70b-8192"
-                    return self.evaluate(lead, system_prompt)
-                
-            lead.llm_status = "ERROR"
-            lead.llm_reason = f"API Error: {str(e)}"
-            console.print(f"[dim red]LLM API Error on lead {lead.source_id}: {e}[/dim red]")
+            candidate.qualification_status = "ERROR"
+            candidate.recommended_action = f"API Error: {str(e)}"
             return False

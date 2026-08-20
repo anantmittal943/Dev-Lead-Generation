@@ -3,11 +3,9 @@ import typer
 import asyncio
 from rich.console import Console
 
-# Force UTF-8 encoding for Windows terminals to prevent charmap errors with checkmarks
 if sys.stdout.encoding.lower() != 'utf-8':
     sys.stdout.reconfigure(encoding='utf-8')
 from rich.panel import Panel
-from ssp.core.database import init_db
 
 app = typer.Typer(
     help="SSP HUNTER - Engineering Opportunity Intelligence",
@@ -16,22 +14,33 @@ app = typer.Typer(
 )
 console = Console()
 
+def init_db(reset: bool = False):
+    from ssp.core.database import engine
+    from sqlmodel import SQLModel
+    import ssp.core.models # load models
+    if reset:
+        SQLModel.metadata.drop_all(engine)
+    SQLModel.metadata.create_all(engine)
+
 @app.command()
 def hunt(
     niche: str = typer.Argument(..., help="Niche to hunt for: 'ai-production', 'takeover'"),
-    min_score: int = typer.Option(60, help="Minimum deterministic score to send to Groq"),
-    verbose: bool = typer.Option(False, "--verbose", help="Show verbose output")
+    verbose: bool = typer.Option(False, "--verbose", help="Show verbose output"),
+    limit: int = typer.Option(None, help="Limit number of generated queries"),
+    source: str = typer.Option(None, help="Filter by specific source (reddit, hn, web)"),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Do not save to database")
 ):
-    """Discover new opportunities."""
-    console.print(Panel(f"Running {niche.upper()} hunt...", title="SSP HUNTER", border_style="cyan"))
-    init_db() # Ensure DB is initialized
+    """Discover new opportunities via Event Intelligence."""
+    console.print(Panel(f"Running {niche.upper()} event hunt", title="SSP HUNTER", border_style="cyan"))
+    
+    if not dry_run:
+        init_db()
     
     from ssp.services.hunt_service import HuntService
     service = HuntService()
     
-    # Run async function
     try:
-        asyncio.run(service.execute_hunt(niche, min_score, verbose))
+        asyncio.run(service.execute_hunt(niche, verbose=verbose, limit=limit, source=source, dry_run=dry_run))
     finally:
         from ssp.core.database import engine
         engine.dispose()
@@ -39,66 +48,47 @@ def hunt(
 @app.command()
 def leads(
     niche: str = typer.Option(None, help="Filter by niche"),
-    min_score: int = typer.Option(None, help="Filter by minimum score"),
-    status: str = typer.Option(None, help="Filter by status")
+    status: str = typer.Option(None, help="Filter by status (HOT, WARM, WATCH)")
 ):
     """Browse saved leads."""
     from ssp.core.database import engine
     from sqlmodel import Session, select
-    from ssp.core.models import Lead
+    from ssp.core.models import Candidate
     from rich.table import Table
     
     with Session(engine) as session:
-        query = select(Lead)
-        if niche: query = query.where(Lead.niche == niche)
-        if min_score: query = query.where(Lead.deterministic_score >= min_score)
-        if status: query = query.where(Lead.status == status)
+        query = select(Candidate)
+        if niche: query = query.where(Candidate.niche == niche)
+        if status: query = query.where(Candidate.qualification_status == status)
         
         results = session.exec(query).all()
         
-        table = Table(title="SSP Hunter Leads")
+        table = Table(title="SSP Hunter Opportunities")
         table.add_column("ID", style="cyan")
         table.add_column("Score", justify="right", style="green")
         table.add_column("Niche", style="magenta")
         table.add_column("Title", style="white")
-        table.add_column("Source", style="yellow")
-        table.add_column("Verdict", style="blue")
+        table.add_column("Status", style="blue")
         
-        for lead in results:
+        for cand in results:
             table.add_row(
-                str(lead.id),
-                str(lead.deterministic_score),
-                lead.niche,
-                lead.title[:50] + ("..." if len(lead.title)>50 else ""),
-                lead.source,
-                lead.llm_status or "UNRATED"
+                str(cand.id),
+                f"{cand.opportunity_score:.1f}" if cand.opportunity_score else "N/A",
+                cand.niche,
+                cand.title[:50] + ("..." if len(cand.title)>50 else ""),
+                cand.qualification_status or "UNRATED"
             )
             
         console.print(table)
-
+        
 @app.command()
-def review():
-    """Review and label candidates."""
-    console.print("Interactive review mode is under construction.")
-
-@app.command()
-def queries():
-    """Manage search intelligence."""
-    console.print("Query management is under construction.")
-
-@app.command()
-def stats():
-    """Analyze source/query performance."""
-    console.print("Stats are under construction.")
-
-@app.command()
-def export():
-    """Export qualified leads."""
-    console.print("Export is under construction.")
-
-@app.command()
-def config():
+def config(reset_db: bool = typer.Option(False, "--reset-db", help="WARNING: Drop and recreate all database tables")):
     """Configure the application."""
+    if reset_db:
+        console.print("[bold red]WARNING: Dropping all tables and recreating schema...[/bold red]")
+        init_db(reset=True)
+        console.print("[green]Database reset complete.[/green]")
+        
     from ssp.core.config import settings
     console.print("[bold green]Configuration Loaded[/bold green]")
     console.print(f"Groq API Key: {'[green]✓ Configured[/green]' if settings.GROQ_API_KEY else '[red]✗ Missing[/red]'}")

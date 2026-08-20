@@ -1,7 +1,7 @@
 import httpx
-from typing import List
+from typing import List, Dict
 from ssp.sources.base import BaseSource
-from ssp.core.models import Lead
+from ssp.core.models import Candidate
 from ssp.core.config import settings
 from ssp.sources.web_search import WebSearchSource
 from rich.console import Console
@@ -13,14 +13,18 @@ class RedditSource(BaseSource):
         self.subreddits = subreddits
         self.base_url = f"https://www.reddit.com/r/{self.subreddits}/search.json"
         
-    async def search(self, queries: List[str], fallback_queries: List[str] = None, verbose: bool = False) -> List[Lead]:
-        leads = []
+    async def search(self, queries: List[Dict[str, str]], verbose: bool = False) -> List[Candidate]:
+        candidates = []
         headers = {"User-Agent": settings.REDDIT_USER_AGENT}
         
         async with httpx.AsyncClient(timeout=15.0) as client:
-            for query in queries:
+            for q_obj in queries:
+                query = q_obj["query"]
+                event_type = q_obj["event_type"]
+                
                 if verbose:
                     console.print(f"\n[cyan]SOURCE: REDDIT DIRECT[/cyan]")
+                    console.print(f"[cyan]EVENT: {event_type}[/cyan]")
                     console.print(f"[cyan]QUERY:\n{query}[/cyan]")
                     
                 try:
@@ -35,37 +39,35 @@ class RedditSource(BaseSource):
                             console.print(f"[red]STATUS:\nFAILED[/red]")
                             console.print(f"[red]ERROR:\nHTTP {resp.status_code}[/red]")
                         
-                        # Trigger Fallback if we hit a 403 or similar and we haven't already
-                        if fallback_queries:
-                            if verbose:
-                                console.print(f"[yellow]FALLBACK:\nSEARCH-BASED REDDIT DISCOVERY[/yellow]")
-                                console.print(f"────────────────────────────")
-                            web_source = WebSearchSource()
-                            return await web_source.search(fallback_queries, verbose=verbose)
-                        else:
-                            console.print(f"[red]Reddit Error (Status {resp.status_code}) with no fallback[/red]")
+                        # Trigger Fallback explicitly for this query
+                        if verbose:
+                            console.print(f"[yellow]FALLBACK:\nSEARCH-BASED REDDIT DISCOVERY[/yellow]")
                             console.print(f"────────────────────────────")
+                        
+                        web_source = WebSearchSource()
+                        fallback_q = [{"query": f"site:reddit.com {query}", "event_type": event_type}]
+                        fallback_cands = await web_source.search(fallback_q, verbose=verbose)
+                        candidates.extend(fallback_cands)
                         continue
                         
                     data = resp.json()
                     children = data.get('data', {}).get('children', [])
                     for post in children:
                         p = post['data']
-                        leads.append(Lead(
-                            niche="",
+                        candidates.append(Candidate(
                             source="Reddit",
-                            source_id=f"reddit_{p.get('id')}",
-                            title=p.get('title', ''),
-                            body=p.get('selftext', ''),
-                            author=p.get('author', ''),
                             source_url=f"https://www.reddit.com{p.get('permalink')}",
-                            community=p.get('subreddit', ''),
-                            content_type="full_content"
+                            title=p.get('title', ''),
+                            content=p.get('selftext', ''),
+                            content_type="FULL_CONTENT",
+                            author=p.get('author', ''),
+                            query=query,
+                            event_type=event_type,
+                            raw_metadata=p
                         ))
                     if verbose:
                         console.print(f"[green]RAW RESULTS:\n{len(children)}[/green]")
                         console.print(f"[green]NORMALIZED:\n{len(children)}[/green]")
-                        console.print(f"[green]CONTENT TYPE:\nFULL_CONTENT[/green]")
                         console.print(f"────────────────────────────")
                         
                 except Exception as e:
@@ -76,4 +78,4 @@ class RedditSource(BaseSource):
                     else:
                         console.print(f"[red]Reddit exception during search: {e}[/red]")
                     
-        return leads
+        return candidates
