@@ -26,6 +26,7 @@ class Candidate(SQLModel, table=True):
     author: Optional[str] = Field(default=None)
     author_url: Optional[str] = Field(default=None)
     published_at: Optional[datetime] = Field(default=None)
+    timestamp_confidence: Optional[str] = Field(default=None)
     query: str = Field(default="")
     event_type: str = Field(default="")
     raw_metadata: Optional[dict] = Field(default=None, sa_column=Column(JSON))

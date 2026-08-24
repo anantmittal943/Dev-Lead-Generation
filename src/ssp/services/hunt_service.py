@@ -75,25 +75,10 @@ class HuntService:
             console.print(f"────────────────────────────────\n")
             console.print(f"Raw candidates\n{run.raw_candidates}\n")
 
-            # --- Freshness Filter ---
-            from ssp.filters.freshness import FreshnessFilter
-            freshness_filter = FreshnessFilter(max_age_days=max_age_days)
-            fresh_candidates = []
-            
-            for cand in all_raw_candidates:
-                f_result = freshness_filter.evaluate(cand)
-                if not f_result["accepted"]:
-                    if verbose:
-                        console.print(f"[dim]STALE REJECTED ({f_result.get('age_days', 'unknown')} days): {cand.title}[/dim]")
-                    continue
-                fresh_candidates.append(cand)
-                
-            console.print(f"Fresh candidates (<= {max_age_days} days)\n{len(fresh_candidates)}\n")
-            
             # --- Deduplication ---
             unique_candidates = []
             seen_urls = set()
-            for cand in fresh_candidates:
+            for cand in all_raw_candidates:
                 if cand.source_url in seen_urls:
                     run.duplicates_removed += 1
                     continue
@@ -108,10 +93,35 @@ class HuntService:
                 unique_candidates.append(cand)
                 
             console.print(f"Duplicates removed\n{run.duplicates_removed}\n")
+
+            # --- Timestamp Resolution ---
+            from ssp.processing.timestamp_resolver import TimestampResolver
+            console.print(f"Resolving timestamps for {len(unique_candidates)} candidates...")
+            
+            async def resolve_batch(cands):
+                tasks = [TimestampResolver.resolve(c, verbose=verbose) for c in cands]
+                return await asyncio.gather(*tasks)
+                
+            resolved_candidates = await resolve_batch(unique_candidates)
+
+            # --- Freshness Filter ---
+            from ssp.filters.freshness import FreshnessFilter
+            freshness_filter = FreshnessFilter(max_age_days=max_age_days)
+            fresh_candidates = []
+            
+            for cand in resolved_candidates:
+                f_result = freshness_filter.evaluate(cand)
+                if not f_result["accepted"]:
+                    if verbose:
+                        console.print(f"[dim]STALE REJECTED ({f_result.get('age_days', 'unknown')} days): {cand.title}[/dim]")
+                    continue
+                fresh_candidates.append(cand)
+                
+            console.print(f"Fresh candidates (<= {max_age_days} days)\n{len(fresh_candidates)}\n")
             
             # --- Garbage Filter ---
             filtered_candidates = []
-            for cand in unique_candidates:
+            for cand in fresh_candidates:
                 full_text = f"{cand.title} {cand.content}"
                 if self._basic_garbage_filter(full_text):
                     run.garbage_rejected += 1

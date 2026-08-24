@@ -145,6 +145,85 @@ def config(reset_db: bool = typer.Option(False, "--reset-db", help="WARNING: Dro
     console.print(f"Reddit User Agent: {'[green]✓ Configured[/green]' if settings.REDDIT_USER_AGENT else '[red]✗ Missing[/red]'}")
     console.print(f"Database URL: {settings.DATABASE_URL}")
 
+@app.command()
+def doctor():
+    """Check environment health and source access."""
+    import httpx
+    from rich.console import Console
+    from ssp.core.config import settings
+    console = Console()
+    
+    console.print("[bold]Checking sources and environment...[/bold]\n")
+    
+    # Check Groq
+    if settings.GROQ_API_KEY:
+        console.print("✓ [green]Groq API Key configured[/green]")
+    else:
+        console.print("✗ [red]Groq API Key missing[/red]")
+        
+    # Check Reddit
+    try:
+        resp = httpx.get("https://www.reddit.com/r/startups/search.json?q=test", headers={"User-Agent": settings.REDDIT_USER_AGENT})
+        if resp.status_code == 200:
+            console.print("✓ [green]Reddit API accessible[/green]")
+        else:
+            console.print(f"✗ [red]Reddit API HTTP {resp.status_code}[/red]")
+            console.print("  [dim]Reddit native source will be disabled or fallback to Web.[/dim]")
+    except Exception as e:
+        console.print(f"✗ [red]Reddit API error: {e}[/red]")
+        
+    # Check Hacker News
+    try:
+        resp = httpx.get("https://hn.algolia.com/api/v1/search?query=test")
+        if resp.status_code == 200:
+            console.print("✓ [green]Hacker News API accessible[/green]")
+        else:
+            console.print(f"✗ [red]Hacker News API HTTP {resp.status_code}[/red]")
+    except Exception as e:
+        console.print(f"✗ [red]Hacker News API error: {e}[/red]")
+        
+    # Check Web Search
+    try:
+        from ddgs import DDGS
+        with DDGS() as ddgs:
+            list(ddgs.text("test", max_results=1))
+        console.print("✓ [green]Web Search (DDGS) accessible[/green]")
+    except Exception as e:
+        console.print(f"✗ [red]Web Search (DDGS) error: {e}[/red]")
+        
+@app.command()
+def debug_lead(lead_id: int = typer.Argument(..., help="ID of the lead to audit")):
+    """Audit a specific candidate processing pipeline."""
+    from ssp.core.database import engine
+    from sqlmodel import Session
+    from ssp.core.models import Candidate
+    
+    with Session(engine) as session:
+        cand = session.get(Candidate, lead_id)
+        if not cand:
+            console.print(f"[red]Lead {lead_id} not found.[/red]")
+            return
+            
+        console.print("[bold]SOURCE DATA[/bold]")
+        console.print("────────────")
+        console.print(f"Source: {cand.source}")
+        console.print(f"URL: {cand.source_url}")
+        console.print(f"Timestamp: {cand.published_at or 'Unknown'} ({cand.timestamp_confidence or 'none'})")
+        console.print("\n[bold]NORMALIZED[/bold]")
+        console.print("────────────")
+        console.print(f"Title: {cand.title}")
+        console.print(f"Body: {cand.content[:200]}...")
+        console.print(f"Event: {cand.event_type}")
+        console.print("\n[bold]FILTERS & SCORING[/bold]")
+        console.print("────────────")
+        console.print(f"Garbage Filtered: {'Yes' if cand.garbage_filtered else 'No'}")
+        console.print(f"Triage Relevant: {cand.triage_relevant}")
+        console.print(f"Qualification Status: {cand.qualification_status}")
+        console.print(f"Score: {cand.opportunity_score}")
+        console.print("\n[bold]FINAL[/bold]")
+        console.print("────────────")
+        console.print(cand.qualification_status or ("REJECTED" if cand.garbage_filtered or not cand.triage_relevant else "PENDING"))
+        
 @app.command(name="tui")
 def run_tui():
     """Launch the interactive Text User Interface (TUI)."""

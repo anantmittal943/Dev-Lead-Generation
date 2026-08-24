@@ -12,7 +12,7 @@ class QualificationStage:
             base_url="https://api.groq.com/openai/v1",
             api_key=settings.GROQ_API_KEY
         )
-        self.model = "openai/gpt-oss-120b"
+        self.model = "llama-3.3-70b-versatile"
 
     def evaluate(self, candidate: Candidate) -> bool:
         system_prompt = """You are Stage 2 Opportunity Qualification for a premium engineering consultancy.

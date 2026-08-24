@@ -9,10 +9,15 @@ class FreshnessFilter:
     def evaluate(self, candidate):
         published_at = getattr(candidate, "published_at", None)
 
+        # If no timestamp could be resolved (e.g. web snippets from DuckDuckGo),
+        # allow the candidate through but flag it as low-confidence instead of
+        # hard-rejecting it.  The LLM triage stage is better equipped to judge
+        # relevance than a date-gating rule that has no date to work with.
         if published_at is None:
             return {
-                "accepted": False,
-                "reason": "UNKNOWN_PUBLICATION_DATE"
+                "accepted": True,
+                "reason": "TIMESTAMP_UNVERIFIED",
+                "age_days": None
             }
 
         if published_at.tzinfo is None:
