@@ -49,6 +49,7 @@ class Candidate(SQLModel, table=True):
     qualification_confidence: Optional[int] = Field(default=None)
     pain_point_summary: Optional[str] = Field(default=None)
     recommended_action: Optional[str] = Field(default=None)
+    contact_info: Optional[str] = Field(default=None)
     
     # Final scoring
     opportunity_score: Optional[float] = Field(default=None)

@@ -13,9 +13,13 @@ class RedditSource(BaseSource):
         self.subreddits = subreddits
         self.base_url = f"https://www.reddit.com/r/{self.subreddits}/search.json"
         
-    async def search(self, queries: List[Dict[str, str]], verbose: bool = False) -> List[Candidate]:
+    async def search(self, queries: List[Dict[str, str]], max_age_days: int = 7, verbose: bool = False) -> List[Candidate]:
+        from datetime import datetime, timezone
+        import time
         candidates = []
         headers = {"User-Agent": settings.REDDIT_USER_AGENT}
+        
+        cutoff_timestamp = time.time() - (max_age_days * 24 * 60 * 60)
         
         async with httpx.AsyncClient(timeout=15.0) as client:
             for q_obj in queries:
@@ -46,7 +50,7 @@ class RedditSource(BaseSource):
                         
                         web_source = WebSearchSource()
                         fallback_q = [{"query": f"site:reddit.com {query}", "event_type": event_type}]
-                        fallback_cands = await web_source.search(fallback_q, verbose=verbose)
+                        fallback_cands = await web_source.search(fallback_q, max_age_days=max_age_days, verbose=verbose)
                         candidates.extend(fallback_cands)
                         continue
                         
@@ -54,6 +58,12 @@ class RedditSource(BaseSource):
                     children = data.get('data', {}).get('children', [])
                     for post in children:
                         p = post['data']
+                        item_time = p.get('created_utc', 0)
+                        if item_time < cutoff_timestamp:
+                            continue
+                            
+                        published_at = datetime.fromtimestamp(item_time, tz=timezone.utc) if item_time else None
+                            
                         candidates.append(Candidate(
                             source="Reddit",
                             source_url=f"https://www.reddit.com{p.get('permalink')}",
@@ -61,6 +71,7 @@ class RedditSource(BaseSource):
                             content=p.get('selftext', ''),
                             content_type="FULL_CONTENT",
                             author=p.get('author', ''),
+                            published_at=published_at,
                             query=query,
                             event_type=event_type,
                             raw_metadata=p

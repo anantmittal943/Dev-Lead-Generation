@@ -34,10 +34,25 @@ TabbedContent {
     layout: horizontal;
 }
 
-#leads-table {
+#leads-table-container {
     width: 60%;
     height: 1fr;
     border-right: solid $primary;
+}
+
+#leads-table {
+    width: 100%;
+    height: 1fr;
+}
+
+#leads-controls {
+    height: auto;
+    padding: 1;
+}
+
+#btn-export-csv {
+    width: auto;
+    margin-top: 0;
 }
 
 #lead-details-scroll {
@@ -107,7 +122,10 @@ class SSPHunterApp(App):
         with TabbedContent(initial="tab-leads"):
             with TabPane("Leads", id="tab-leads"):
                 with Horizontal(id="leads-container"):
-                    yield DataTable(id="leads-table", cursor_type="row")
+                    with Vertical(id="leads-table-container"):
+                        with Horizontal(id="leads-controls"):
+                            yield Button("Export CSV", id="btn-export-csv", variant="success")
+                        yield DataTable(id="leads-table", cursor_type="row")
                     with VerticalScroll(id="lead-details-scroll"):
                         yield Markdown("Select a lead to view details.", id="lead-details")
             
@@ -130,6 +148,9 @@ class SSPHunterApp(App):
                         
                         yield Label("Limit (Queries)", classes="control-label")
                         yield Input(placeholder="e.g. 5 (Leave blank for all)", id="hunt-limit")
+                        
+                        yield Label("Max Age (Days)", classes="control-label")
+                        yield Input(value="7", id="hunt-maxage")
                         
                         yield Horizontal(
                             Label("Verbose Output", classes="control-label"),
@@ -212,6 +233,7 @@ class SSPHunterApp(App):
 **ID:** {cand.id} | **Niche:** {cand.niche} | **Status:** {cand.qualification_status}
 **Score:** {cand.opportunity_score} | **Event Type:** {cand.event_type}
 **Source:** [{cand.source}]({cand.source_url})
+**Contact Info:** {cand.contact_info or "None found"}
 
 ## Content
 {cand.content}
@@ -224,7 +246,35 @@ class SSPHunterApp(App):
 """
                 md.update(details)
 
+    def action_export_csv(self) -> None:
+        """Export leads to a CSV file."""
+        import csv
+        import os
+        from datetime import datetime
+        
+        filename = f"leads_export_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
+        
+        with Session(engine) as session:
+            results = session.exec(select(Candidate)).all()
+            try:
+                with open(filename, mode='w', newline='', encoding='utf-8') as f:
+                    writer = csv.writer(f)
+                    writer.writerow(["ID", "Niche", "Title", "Status", "Score", "Event Type", "Source", "Source URL", "Contact Info", "Pain Point Summary", "Recommended Action"])
+                    for cand in results:
+                        writer.writerow([
+                            cand.id, cand.niche, cand.title, cand.qualification_status, cand.opportunity_score,
+                            cand.event_type, cand.source, cand.source_url, cand.contact_info,
+                            cand.pain_point_summary, cand.recommended_action
+                        ])
+                self.notify(f"Successfully exported {len(results)} leads to {filename}")
+            except Exception as e:
+                self.notify(f"Failed to export: {e}", severity="error")
+
     async def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "btn-export-csv":
+            self.action_export_csv()
+            return
+            
         if event.button.id == "btn-hunt":
             niche_select = self.query_one("#hunt-niche", Select)
             if not niche_select.value or niche_select.value == Select.BLANK:
@@ -239,6 +289,9 @@ class SSPHunterApp(App):
             limit_val = self.query_one("#hunt-limit", Input).value
             limit = int(limit_val) if limit_val.isdigit() else None
             
+            maxage_val = self.query_one("#hunt-maxage", Input).value
+            max_age_days = int(maxage_val) if maxage_val.isdigit() else 7
+            
             verbose = self.query_one("#hunt-verbose", Switch).value
             dry_run = self.query_one("#hunt-dryrun", Switch).value
             
@@ -247,10 +300,10 @@ class SSPHunterApp(App):
             log.clear()
             log.write(f"[bold cyan]Starting Hunt for '{niche}'...[/bold cyan]")
             
-            self.run_hunt_worker(niche, source, limit, verbose, dry_run)
+            self.run_hunt_worker(niche, source, limit, max_age_days, verbose, dry_run)
 
     @work(exclusive=True, thread=True)
-    def run_hunt_worker(self, niche: str, source: str, limit: int, verbose: bool, dry_run: bool) -> None:
+    def run_hunt_worker(self, niche: str, source: str, limit: int, max_age_days: int, verbose: bool, dry_run: bool) -> None:
         """Run the hunt in a separate worker thread."""
         log = self.query_one("#hunt-log", RichLog)
         
@@ -267,7 +320,7 @@ class SSPHunterApp(App):
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
             loop.run_until_complete(
-                service.execute_hunt(niche=niche, verbose=verbose, limit=limit, source=source, dry_run=dry_run)
+                service.execute_hunt(niche=niche, verbose=verbose, limit=limit, source=source, max_age_days=max_age_days, dry_run=dry_run)
             )
         except Exception as e:
             self.call_from_thread(log.write, f"[bold red]Error during hunt: {e}[/bold red]")

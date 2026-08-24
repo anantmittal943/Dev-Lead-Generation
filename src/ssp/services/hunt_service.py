@@ -28,7 +28,7 @@ class HuntService:
             return True
         return False
 
-    async def execute_hunt(self, niche_name: str, verbose: bool, limit: int = None, source: str = None, dry_run: bool = False):
+    async def execute_hunt(self, niche_name: str, verbose: bool, limit: int = None, source: str = None, max_age_days: int = 7, dry_run: bool = False):
         if niche_name not in EVENT_REGISTRY:
             console.print(f"[bold red]Unknown niche: {niche_name}[/bold red]")
             return
@@ -54,19 +54,19 @@ class HuntService:
             # --- Discovery ---
             if not source or source.lower() == "reddit":
                 reddit = RedditSource()
-                reddit_leads = await reddit.search(queries, verbose=verbose)
+                reddit_leads = await reddit.search(queries, max_age_days=max_age_days, verbose=verbose)
                 console.print(f"Reddit Discovery\n✓ {len(reddit_leads)} candidates\n")
                 all_raw_candidates.extend(reddit_leads)
                 
             if not source or source.lower() == "web":
                 web = WebSearchSource()
-                web_leads = await web.search(queries, verbose=verbose)
+                web_leads = await web.search(queries, max_age_days=max_age_days, verbose=verbose)
                 console.print(f"Web Search\n✓ {len(web_leads)} candidates\n")
                 all_raw_candidates.extend(web_leads)
                 
             if not source or source.lower() == "hn":
                 hn = HackerNewsSource()
-                hn_leads = await hn.search(queries, verbose=verbose)
+                hn_leads = await hn.search(queries, max_age_days=max_age_days, verbose=verbose)
                 console.print(f"Hacker News\n✓ {len(hn_leads)} candidates\n")
                 all_raw_candidates.extend(hn_leads)
                 
@@ -74,11 +74,26 @@ class HuntService:
             
             console.print(f"────────────────────────────────\n")
             console.print(f"Raw candidates\n{run.raw_candidates}\n")
+
+            # --- Freshness Filter ---
+            from ssp.filters.freshness import FreshnessFilter
+            freshness_filter = FreshnessFilter(max_age_days=max_age_days)
+            fresh_candidates = []
+            
+            for cand in all_raw_candidates:
+                f_result = freshness_filter.evaluate(cand)
+                if not f_result["accepted"]:
+                    if verbose:
+                        console.print(f"[dim]STALE REJECTED ({f_result.get('age_days', 'unknown')} days): {cand.title}[/dim]")
+                    continue
+                fresh_candidates.append(cand)
+                
+            console.print(f"Fresh candidates (<= {max_age_days} days)\n{len(fresh_candidates)}\n")
             
             # --- Deduplication ---
             unique_candidates = []
             seen_urls = set()
-            for cand in all_raw_candidates:
+            for cand in fresh_candidates:
                 if cand.source_url in seen_urls:
                     run.duplicates_removed += 1
                     continue

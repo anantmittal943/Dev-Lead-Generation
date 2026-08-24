@@ -28,6 +28,7 @@ def hunt(
     verbose: bool = typer.Option(False, "--verbose", help="Show verbose output"),
     limit: int = typer.Option(None, help="Limit number of generated queries"),
     source: str = typer.Option(None, help="Filter by specific source (reddit, hn, web)"),
+    max_age_days: int = typer.Option(7, "--max-age-days", help="Maximum age of leads in days"),
     dry_run: bool = typer.Option(False, "--dry-run", help="Do not save to database")
 ):
     """Discover new opportunities via Event Intelligence."""
@@ -40,7 +41,7 @@ def hunt(
     service = HuntService()
     
     try:
-        asyncio.run(service.execute_hunt(niche, verbose=verbose, limit=limit, source=source, dry_run=dry_run))
+        asyncio.run(service.execute_hunt(niche, verbose=verbose, limit=limit, source=source, max_age_days=max_age_days, dry_run=dry_run))
     finally:
         from ssp.core.database import engine
         engine.dispose()
@@ -48,13 +49,15 @@ def hunt(
 @app.command()
 def leads(
     niche: str = typer.Option(None, help="Filter by niche"),
-    status: str = typer.Option(None, help="Filter by status (HOT, WARM, WATCH)")
+    status: str = typer.Option(None, help="Filter by status (HOT, WARM, WATCH)"),
+    export: str = typer.Option(None, "--export", "-e", help="Export to CSV file path")
 ):
     """Browse saved leads."""
     from ssp.core.database import engine
     from sqlmodel import Session, select
     from ssp.core.models import Candidate
     from rich.table import Table
+    import csv
     
     with Session(engine) as session:
         query = select(Candidate)
@@ -62,6 +65,19 @@ def leads(
         if status: query = query.where(Candidate.qualification_status == status)
         
         results = session.exec(query).all()
+
+        if export:
+            with open(export, mode='w', newline='', encoding='utf-8') as f:
+                writer = csv.writer(f)
+                writer.writerow(["ID", "Niche", "Title", "Status", "Score", "Event Type", "Source", "Source URL", "Contact Info", "Pain Point Summary", "Recommended Action"])
+                for cand in results:
+                    writer.writerow([
+                        cand.id, cand.niche, cand.title, cand.qualification_status, cand.opportunity_score,
+                        cand.event_type, cand.source, cand.source_url, cand.contact_info,
+                        cand.pain_point_summary, cand.recommended_action
+                    ])
+            console.print(f"[green]Successfully exported {len(results)} leads to {export}[/green]")
+            return
         
         table = Table(title="SSP Hunter Opportunities")
         table.add_column("ID", style="cyan")
@@ -80,6 +96,40 @@ def leads(
             )
             
         console.print(table)
+        
+@app.command()
+def lead(lead_id: int = typer.Argument(..., help="ID of the lead to view")):
+    """View details for a specific lead."""
+    from ssp.core.database import engine
+    from sqlmodel import Session
+    from ssp.core.models import Candidate
+    from rich.markdown import Markdown as RichMarkdown
+    
+    with Session(engine) as session:
+        cand = session.get(Candidate, lead_id)
+        if not cand:
+            console.print(f"[red]Lead {lead_id} not found.[/red]")
+            return
+            
+        md = f"""# {cand.title}
+**ID:** {cand.id} | **Niche:** {cand.niche} | **Status:** {cand.qualification_status}
+**Score:** {cand.opportunity_score} | **Event Type:** {cand.event_type}
+**Source:** [{cand.source}]({cand.source_url})
+**Contact Info:** {cand.contact_info or "None found"}
+
+## Pain Point Summary
+{cand.pain_point_summary or "N/A"}
+
+## Recommended Action
+{cand.recommended_action or "N/A"}
+
+## Triage Reason
+{cand.triage_reason or "N/A"}
+
+## Content Snippet
+{cand.content[:500]}...
+"""
+        console.print(RichMarkdown(md))
         
 @app.command()
 def config(reset_db: bool = typer.Option(False, "--reset-db", help="WARNING: Drop and recreate all database tables")):

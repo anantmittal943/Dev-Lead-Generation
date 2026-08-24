@@ -8,12 +8,16 @@ from rich.console import Console
 console = Console()
 
 class WebSearchSource(BaseSource):
-    async def search(self, queries: List[Dict[str, str]], verbose: bool = False) -> List[Candidate]:
+    async def search(self, queries: List[Dict[str, str]], max_age_days: int = 7, verbose: bool = False) -> List[Candidate]:
         candidates = []
+        
+        # DDGS timelimit options: 'd' (day), 'w' (week), 'm' (month)
+        # We default to 'w' if max_age_days <= 7
+        t_limit = "d" if max_age_days <= 1 else "w" if max_age_days <= 7 else "m"
         
         def fetch_ddg(q):
             with DDGS() as ddgs:
-                return list(ddgs.text(q, max_results=10))
+                return list(ddgs.text(q, max_results=10, timelimit=t_limit))
 
         for q_obj in queries:
             query = q_obj["query"]

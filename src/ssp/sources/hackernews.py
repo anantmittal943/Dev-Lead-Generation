@@ -8,9 +8,13 @@ from rich.console import Console
 console = Console()
 
 class HackerNewsSource(BaseSource):
-    async def search(self, queries: List[Dict[str, str]], verbose: bool = False) -> List[Candidate]:
+    async def search(self, queries: List[Dict[str, str]], max_age_days: int = 7, verbose: bool = False) -> List[Candidate]:
+        from datetime import datetime, timezone
+        import time
         candidates = []
         headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"}
+        
+        cutoff_timestamp = time.time() - (max_age_days * 24 * 60 * 60)
         
         async with httpx.AsyncClient(timeout=15.0, headers=headers) as client:
             for q_obj in queries:
@@ -31,6 +35,12 @@ class HackerNewsSource(BaseSource):
                         hits = data.get('hits', [])
                         valid_hits = 0
                         for hit in hits:
+                            item_time = hit.get('created_at_i', 0)
+                            if item_time < cutoff_timestamp:
+                                continue
+                                
+                            published_at = datetime.fromtimestamp(item_time, tz=timezone.utc) if item_time else None
+                            
                             candidates.append(Candidate(
                                 source="Hacker News",
                                 source_url=f"https://news.ycombinator.com/item?id={hit['objectID']}",
@@ -38,6 +48,7 @@ class HackerNewsSource(BaseSource):
                                 content=hit.get('story_text') or hit.get('comment_text') or '',
                                 content_type="FULL_CONTENT",
                                 author=hit.get('author', 'unknown'),
+                                published_at=published_at,
                                 query=query,
                                 event_type=event_type,
                                 raw_metadata=hit

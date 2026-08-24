@@ -19,6 +19,7 @@ class QualificationStage:
 Evaluate the triage data and content to classify the opportunity.
 
 Use ONLY available evidence. For snippet-only content, it's often best to classify as WATCH and recommend manual inspection.
+Also, try to extract any available contact information (emails, social handles, or mention if they can be DMed on the platform).
 
 Definitions:
 HOT: Strong evidence of relevant technical event, decision maker, meaningful pain, commercial context, and urgency.
@@ -32,7 +33,8 @@ Output strictly valid JSON:
   "confidence": 0-100,
   "pain_point_summary": "...",
   "recommended_action": "...",
-  "reason": "..."
+  "reason": "...",
+  "contact_info": "..."
 }"""
 
         user_prompt = f"""
@@ -67,6 +69,7 @@ CONTENT:
                 candidate.qualification_confidence = result.get("confidence", 0)
                 candidate.pain_point_summary = result.get("pain_point_summary", "")
                 candidate.recommended_action = result.get("recommended_action", "")
+                candidate.contact_info = result.get("contact_info", "")
                 
                 # Opportunity Score Calculation
                 buyer_likelihood = 90 if candidate.triage_actor_type in ("FOUNDER", "BUSINESS_OWNER") else (50 if candidate.triage_actor_type == "UNKNOWN" else 10)
@@ -74,7 +77,18 @@ CONTENT:
                 urg = candidate.triage_urgency or 0
                 cs = candidate.triage_commercial_signal or 0
                 
-                candidate.opportunity_score = (buyer_likelihood * 0.35) + (tp * 0.30) + (urg * 0.20) + (cs * 0.15)
+                freshness_points = 0
+                if candidate.published_at:
+                    from datetime import datetime, timezone
+                    age = datetime.now(timezone.utc) - candidate.published_at.replace(tzinfo=timezone.utc)
+                    age_hours = age.total_seconds() / 3600
+                    if age_hours <= 6: freshness_points = 30
+                    elif age_hours <= 24: freshness_points = 25
+                    elif age_hours <= 72: freshness_points = 18
+                    elif age_hours <= 7 * 24: freshness_points = 10
+                
+                base_score = (buyer_likelihood * 0.35) + (tp * 0.30) + (urg * 0.20) + (cs * 0.15)
+                candidate.opportunity_score = min(100.0, base_score + freshness_points)
                 
                 return candidate.qualification_status in ("HOT", "WARM", "WATCH")
                 
