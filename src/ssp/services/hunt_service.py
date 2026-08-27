@@ -9,6 +9,8 @@ from ssp.events.query_generator import EventQueryGenerator
 from ssp.sources.reddit import RedditSource
 from ssp.sources.hackernews import HackerNewsSource
 from ssp.sources.web_search import WebSearchSource
+from ssp.sources.devto import DevToSource
+from ssp.sources.indiehackers import IndieHackersSource
 from ssp.intelligence.triage import TriageStage
 from ssp.intelligence.qualifier import QualificationStage
 from rich.console import Console
@@ -52,23 +54,38 @@ class HuntService:
                 session.commit()
             
             # --- Discovery ---
+            # Reddit is paused (API closed 2025/2026) — kept as stub, returns [].
             if not source or source.lower() == "reddit":
                 reddit = RedditSource()
                 reddit_leads = await reddit.search(queries, max_age_days=max_age_days, verbose=verbose)
-                console.print(f"Reddit Discovery\n✓ {len(reddit_leads)} candidates\n")
-                all_raw_candidates.extend(reddit_leads)
-                
-            if not source or source.lower() == "web":
-                web = WebSearchSource()
-                web_leads = await web.search(queries, max_age_days=max_age_days, verbose=verbose)
-                console.print(f"Web Search\n✓ {len(web_leads)} candidates\n")
-                all_raw_candidates.extend(web_leads)
-                
+                if reddit_leads:
+                    console.print(f"Reddit Discovery\n✓ {len(reddit_leads)} candidates\n")
+                    all_raw_candidates.extend(reddit_leads)
+
             if not source or source.lower() == "hn":
                 hn = HackerNewsSource()
                 hn_leads = await hn.search(queries, max_age_days=max_age_days, verbose=verbose)
                 console.print(f"Hacker News\n✓ {len(hn_leads)} candidates\n")
                 all_raw_candidates.extend(hn_leads)
+
+            if not source or source.lower() == "devto":
+                devto = DevToSource()
+                devto_leads = await devto.search(queries, max_age_days=max_age_days, verbose=verbose)
+                console.print(f"dev.to\n✓ {len(devto_leads)} candidates\n")
+                all_raw_candidates.extend(devto_leads)
+
+            if not source or source.lower() == "ih":
+                ih = IndieHackersSource()
+                ih_leads = await ih.search(queries, max_age_days=max_age_days, verbose=verbose)
+                console.print(f"Indie Hackers\n✓ {len(ih_leads)} candidates\n")
+                all_raw_candidates.extend(ih_leads)
+
+            if not source or source.lower() == "web":
+                web = WebSearchSource()
+                web_leads = await web.search(queries, max_age_days=max_age_days, verbose=verbose)
+                console.print(f"Web Search\n✓ {len(web_leads)} candidates\n")
+                all_raw_candidates.extend(web_leads)
+
                 
             run.raw_candidates = len(all_raw_candidates)
             
