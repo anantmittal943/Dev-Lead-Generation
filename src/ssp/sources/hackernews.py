@@ -41,14 +41,20 @@ class HackerNewsSource(BaseSource):
                                 
                             published_at = datetime.fromtimestamp(item_time, tz=timezone.utc) if item_time else None
                             
+                            # HN author profile is the primary contact surface
+                            author = hit.get('author', 'unknown')
+                            author_url = f"https://news.ycombinator.com/user?id={author}" if author and author != 'unknown' else None
+                            
                             candidates.append(Candidate(
                                 source="Hacker News",
                                 source_url=f"https://news.ycombinator.com/item?id={hit['objectID']}",
                                 title=hit.get('title') or hit.get('story_title') or '',
                                 content=hit.get('story_text') or hit.get('comment_text') or '',
                                 content_type="FULL_CONTENT",
-                                author=hit.get('author', 'unknown'),
+                                author=author,
+                                author_url=author_url,
                                 published_at=published_at,
+                                timestamp_confidence="verified_platform",
                                 query=query,
                                 event_type=event_type,
                                 raw_metadata=hit

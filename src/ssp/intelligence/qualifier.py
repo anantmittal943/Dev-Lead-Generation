@@ -15,11 +15,22 @@ class QualificationStage:
         self.model = "llama-3.3-70b-versatile"
 
     def evaluate(self, candidate: Candidate) -> bool:
+        # Pull pre-populated contact signals from source adapters
+        raw_meta = candidate.raw_metadata or {}
+        contact_hints = raw_meta.get("contact_summary", "")
+        author_url_hint = candidate.author_url or ""
+        author_hint = candidate.author or ""
+
         system_prompt = """You are Stage 2 Opportunity Qualification for a premium engineering consultancy.
 Evaluate the triage data and content to classify the opportunity.
 
 Use ONLY available evidence. For snippet-only content, it's often best to classify as WATCH and recommend manual inspection.
-Also, try to extract any available contact information (emails, social handles, or mention if they can be DMed on the platform).
+
+CONTACT EXTRACTION IS MANDATORY.
+You will be given pre-populated contact signals from the source. Your job is to:
+1. Use the pre-populated contact_hints if present.
+2. Also scan the content for any emails, @handles, LinkedIn URLs, or website URLs.
+3. Always output a contact_info string — never leave it blank. If no contact info exists at all, output: "No contact surface found. Reach via [platform] DM if possible."
 
 Definitions:
 HOT: Strong evidence of relevant technical event, decision maker, meaningful pain, commercial context, and urgency.
@@ -37,17 +48,21 @@ Output strictly valid JSON:
   "contact_info": "..."
 }"""
 
-        user_prompt = f"""
-EVENT: {candidate.event_type}
+        user_prompt = f"""EVENT: {candidate.event_type}
 CONTENT TYPE: {candidate.content_type}
 TRIAGE PAIN: {candidate.triage_technical_pain}
 TRIAGE COMMERCIAL: {candidate.triage_commercial_signal}
 TRIAGE ACTOR: {candidate.triage_actor_type}
+SOURCE: {candidate.source}
+AUTHOR: {author_hint}
+AUTHOR URL (pre-populated): {author_url_hint}
+CONTACT HINTS (pre-populated by source adapter): {contact_hints}
 
 TITLE: {candidate.title}
 CONTENT:
 {candidate.content}
 """
+
         
         import time
         max_retries = 3

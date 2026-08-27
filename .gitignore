@@ -9,7 +9,6 @@ env/
 ENV/
 
 # Environment secrets
-.env
 *.env
 !.env.example
 
@@ -21,7 +20,6 @@ archive/
 # OS/editor files
 .DS_Store
 Thumbs.db
-.vscode/
 .idea/
 
 # Build and packaging
@@ -29,3 +27,5 @@ build/
 dist/
 *.egg-info/
 .pytest_cache/
+config.bat
+node_modules
